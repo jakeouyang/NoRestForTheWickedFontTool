@@ -10,7 +10,10 @@ public static class SelfTest
         void Reject(Action action, string name) { try { action(); } catch { Console.WriteLine("PASS: " + name); return; } throw new Exception("FAIL: " + name); }
         Reject(() => Store.Within(root, "../escape"), "path traversal");
         Reject(() => FontCheck.Validate(new byte[100]), "invalid font");
-        Check(UnityFonts.IsTarget("NotoSerifSC-Regular") && UnityFonts.IsTarget("Noto Serif CJK JP Bold") && !UnityFonts.IsTarget("NotoColorEmoji"), "font selection");
+        Check(UnityFonts.IsTarget("NotoSerifSC-Regular", L10n.User) && UnityFonts.IsTarget("NotoSerifTC-Bold", L10n.User) &&
+              UnityFonts.IsTarget("Noto Serif CJK JP Bold", L10n.All) && !UnityFonts.IsTarget("NotoColorEmoji", L10n.All) &&
+              !UnityFonts.IsTarget("NotoSerif-Regular", L10n.User) && !UnityFonts.IsTarget("LiberationSans", L10n.User) &&
+              !UnityFonts.IsTarget("Arcon-Regular", L10n.User) && !UnityFonts.IsTarget("NotoSerifJP-Regular", L10n.User), "font selection");
         File.WriteAllText(Path.Combine(root, "game"), "original");
         File.WriteAllText(Path.Combine(root, "stage"), "patched");
         var c = new Change { Relative = "game", Stage = "stage", Rollback = "rollback", Before = Store.HashFile(Path.Combine(root, "game")), After = Store.HashFile(Path.Combine(root, "stage")) };

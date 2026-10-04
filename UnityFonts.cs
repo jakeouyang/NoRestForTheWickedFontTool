@@ -1,4 +1,4 @@
-using AssetsTools.NET;
+﻿using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -12,14 +12,28 @@ public record FontObject(string Entry, long Id, string Name, string Hash, bool T
 // Open one container at a time; LZ4 blocks are read lazily by AssetsTools.NET.
 public sealed class UnityFonts : IDisposable
 {
+    static readonly (string Code, Regex Pattern)[] Patterns =
+    {
+        ("SC", new Regex(@"^NotoSerif(?:CJK)?SC[-_]?(?:Regular|Bold)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)),
+        ("TC", new Regex(@"^NotoSerif(?:CJK)?TC[-_]?(?:Regular|Bold)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)),
+        ("JP", new Regex(@"^NotoSerif(?:CJK)?JP[-_]?(?:Regular|Bold)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)),
+        ("KR", new Regex(@"^NotoSerif(?:CJK)?KR[-_]?(?:Regular|Bold)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)),
+    };
     readonly AssetsManager manager = new();
     readonly List<(string Name, AssetsFileInstance File, int Index)> files = new();
     readonly BundleFileInstance? bundle;
+    readonly IReadOnlySet<string> languages;
+    readonly byte originalCompression;
     string? unpacked;
     public long ExpandedSize { get; }
 
-    public UnityFonts(string path, string scratch)
+    public static bool IsTarget(string name, IReadOnlySet<string> selected) =>
+        Patterns.Any(p => selected.Contains(p.Code) && p.Pattern.IsMatch(name.Replace(" ", "")));
+    public bool IsTarget(string name) => IsTarget(name, languages);
+
+    public UnityFonts(string path, string scratch, IReadOnlySet<string>? selected = null)
     {
+        languages = selected ?? L10n.All;
         try
         {
             manager.UseTemplateFieldCache = false;
@@ -30,6 +44,10 @@ public sealed class UnityFonts : IDisposable
             if (Encoding.ASCII.GetString(magic).StartsWith("UnityFS"))
             {
                 bundle = manager.LoadBundleFile(path, false);
+                // Preserve the container's original storage: repacking an uncompressed
+                // bundle as LZ4 breaks Unity 6 streaming reads of .resS texture data.
+                originalCompression = bundle.file.BlockAndDirInfo.BlockInfos is { Length: > 0 } originalBlocks
+                    ? originalBlocks[0].GetCompressionType() : (byte)0;
                 if (bundle.file.DataIsCompressed)
                 {
                     Directory.CreateDirectory(scratch);
@@ -52,9 +70,6 @@ public sealed class UnityFonts : IDisposable
         catch { Dispose(); throw; }
     }
 
-    public static bool IsTarget(string name) => Regex.IsMatch(name.Replace(" ", ""),
-        @"^NotoSerif(?:CJK)?(?:SC|TC|JP|KR)[-_]?(?:Regular|Bold)$", RegexOptions.IgnoreCase);
-
     AssetTypeValueField Read(AssetsFileInstance file, AssetFileInfo info)
     {
         if (!file.file.Metadata.TypeTreeEnabled)
@@ -75,7 +90,8 @@ public sealed class UnityFonts : IDisposable
         file.file.Reader.Position = info.GetAbsoluteByteOffset(file.file);
         byte[] original = file.file.Reader.ReadBytes(checked((int)info.ByteSize));
         if (!serialized.AsSpan().SequenceEqual(original))
-            throw new InvalidDataException($"{file.name} 的 Font 结构往返校验失败（Unity {file.file.Metadata.UnityVersion}），停止写入。");
+            throw new InvalidDataException(L10n.S($"{file.name} 的 Font 结构往返校验失败（Unity {file.file.Metadata.UnityVersion}），停止写入。",
+                $"{file.name} 的 Font 結構往返校驗失敗（Unity {file.file.Metadata.UnityVersion}），停止寫入。"));
         return value;
     }
 
@@ -85,7 +101,7 @@ public sealed class UnityFonts : IDisposable
         if (!data.IsDummy && data.TemplateField.ValueType == AssetValueType.ByteArray) return data;
         var array = data["Array"];
         if (array.IsDummy || array.TemplateField.ValueType != AssetValueType.ByteArray)
-            throw new InvalidDataException("Font.m_FontData 结构已改变，停止写入。");
+            throw new InvalidDataException(L10n.S("Font.m_FontData 结构已改变，停止写入。", "Font.m_FontData 結構已改變，停止寫入。"));
         return array;
     }
 
@@ -183,7 +199,7 @@ public sealed class UnityFonts : IDisposable
             if (dirty && bundle != null)
                 bundle.file.BlockAndDirInfo.DirectoryInfos[entry.Index].SetNewData(entry.File.file);
         }
-        if (changed == 0) throw new InvalidDataException("没有可替换的目标 Font 对象。");
+        if (changed == 0) throw new InvalidDataException(L10n.S("没有可替换的目标 Font 对象。", "沒有可替換的目標 Font 物件。"));
         if (bundle == null)
         {
             using var writer = new AssetsFileWriter(output);
@@ -194,14 +210,27 @@ public sealed class UnityFonts : IDisposable
             string raw = output + ".raw";
             try
             {
-                report("写出资源，随后进行 LZ4 分块压缩…");
+                // Keep the container's original storage. An uncompressed bundle that
+                // is repacked as LZ4 loses Unity 6 streaming reads of .resS data,
+                // which corrupts baked atlases on load.
+                var compression = originalCompression switch
+                {
+                    (byte)AssetBundleCompressionType.LZMA => AssetBundleCompressionType.LZMA,
+                    (byte)AssetBundleCompressionType.LZ4 => AssetBundleCompressionType.LZ4,
+                    (byte)AssetBundleCompressionType.LZ4Fast => AssetBundleCompressionType.LZ4Fast,
+                    _ => AssetBundleCompressionType.None,
+                };
+                if (compression == AssetBundleCompressionType.None)
+                    report(L10n.S("按原始未压缩方式重打包资源容器…", "按原始未壓縮方式重新打包資源容器…"));
+                else
+                    report(L10n.S("写出资源，随后进行分块压缩…", "寫出資源，隨後進行分塊壓縮…"));
                 using (var writer = new AssetsFileWriter(raw)) bundle.file.Write(writer);
                 var repack = new AssetBundleFile();
                 try
                 {
                     repack.Read(new AssetsFileReader(File.OpenRead(raw)));
                     using var writer = new AssetsFileWriter(output);
-                    repack.Pack(writer, AssetBundleCompressionType.LZ4Fast, true, new PackProgress(report));
+                    repack.Pack(writer, compression, true, new PackProgress(report));
                 }
                 finally { repack.Close(); }
             }
@@ -222,7 +251,7 @@ public sealed class UnityFonts : IDisposable
         {
             int percent = (int)(progress * 100);
             if (percent / 5 == last / 5 && last >= 0) return;
-            last = percent; report($"LZ4 压缩 {percent}%");
+            last = percent; report(L10n.S($"压缩 {percent}%", $"壓縮 {percent}%"));
         }
     }
 }
