@@ -1,0 +1,13 @@
+bin/
+obj/
+out/
+qa/
+publish/
+*.user
+.vs/
+.WickedFontTool/
+TestResults/
+*.log
+*.tmp
+*.bak
+docs/images/render.png
