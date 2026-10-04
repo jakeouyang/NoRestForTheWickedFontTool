@@ -4,6 +4,10 @@
 
 ![WickedFontTool](docs/images/wicked-font-tool.png)
 
+游戏内效果（简体中文 + 自定义字体） / 遊戲內效果（簡體中文 + 自訂字體）：
+
+![游戏内效果](docs/images/jietu.jpg)
+
 ## 简体中文
 
 《恶意不息》Windows 版中文字体替换工具。选择游戏根目录和 `.ttf` / `.otf` 字体文件，即可一键安装或还原；发布包自带 .NET 运行时，无需 Python、Unity 编辑器或额外依赖。支持按语言替换：简体中文、繁體中文，可多选。界面与日志提供简体 / 繁體双语，可一键切换并记住选择。
